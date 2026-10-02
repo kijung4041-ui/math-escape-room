@@ -6,12 +6,12 @@
 <title>수학 방탈출 - 교사용</title>
 <style>
 body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#eaf5ff;color:#23324a;font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
-.card{background:#fff;border-radius:20px;padding:28px 24px;width:min(94vw,520px);border:2px solid #cfe5fa}
+.card{background:#fff;border-radius:20px;padding:28px 24px;width:min(94vw,560px);border:2px solid #cfe5fa;margin:16px 0}
 h1{font-size:22px;margin:0 0 8px}
 p{margin:0 0 16px;font-size:15px;color:#5b6b82;line-height:1.5}
 input{width:100%;box-sizing:border-box;font-size:18px;padding:12px;border:2px solid #b9d7f5;border-radius:12px;color:#23324a}
 input:focus{outline:3px solid #ffd24d;border-color:#ffd24d}
-button{font-size:17px;padding:12px 18px;border:0;border-radius:12px;background:#ffd24d;color:#23324a;font-weight:700;cursor:pointer}
+button{font-size:17px;padding:12px 14px;border:0;border-radius:12px;background:#ffd24d;color:#23324a;font-weight:700;cursor:pointer}
 button.sub{background:#e3f1ff}
 .row{display:flex;gap:10px;margin-top:14px}
 .row button{flex:1}
@@ -34,14 +34,15 @@ th{color:#5b6b82;font-weight:600;font-size:14px}
   </section>
 
   <section id="panel" class="hide">
-    <h1>대기자 확인</h1>
-    <p>상태: <span class="badge" id="state"></span> · <span id="count"></span></p>
+    <h1 id="title">대기자 확인</h1>
+    <p>상태: <span class="badge" id="state"></span> · <span id="count"></span> · <span id="clock"></span></p>
     <table>
-      <thead><tr><th>닉네임</th><th>푼 문제</th></tr></thead>
+      <thead><tr><th>순위</th><th>닉네임</th><th>푼 문제</th><th>상태</th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
     <div class="row">
       <button id="startBtn">게임 시작</button>
+      <button id="endBtn" class="sub">방탈출 종료</button>
       <button id="resetBtn" class="sub">새 게임</button>
     </div>
     <div class="err" id="msg"></div>
@@ -49,13 +50,15 @@ th{color:#5b6b82;font-weight:600;font-size:14px}
 </main>
 
 <script type="module">
-import { db, ref, onValue, set, update, remove } from "./firebase-config.js";
+import { db, ref, onValue, set, update, remove, rank } from "./firebase-config.js";
 
 const PASSWORD = "1234";
 const TOTAL = 6;
-const $ = id => document.getElementById(id);
+const SPOT = { 1: "교탁", 2: "칠판", 3: "책상", 4: "벽시계", 5: "사물함", 6: "창문" };
 const LABEL = { waiting: "대기 중", playing: "진행 중", ended: "종료" };
-let state = "waiting", players = {};
+const TITLE = { waiting: "대기자 확인", playing: "진행 현황", ended: "최종 순위" };
+const $ = id => document.getElementById(id);
+let game = {}, players = {}, endSent = false;
 
 function unlock(){
   $("gate").classList.add("hide");
@@ -70,26 +73,66 @@ function login(){
 $("pwBtn").onclick = login;
 $("pw").addEventListener("keydown", e => { if (e.key === "Enter") login(); });
 
+const mmss = ms => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+};
+
+function cell(text){ const td = document.createElement("td"); td.textContent = text; return td; }
+
 function render(){
+  const state = game.state || "waiting";
+  const startedAt = game.startedAt || 0;
+  const list = Object.entries(players);
   $("state").textContent = LABEL[state] || state;
-  const list = Object.values(players);
+  $("title").textContent = TITLE[state] || "";
   $("count").textContent = list.length + "명 입장";
-  $("rows").replaceChildren(...list.map(p => {
+
+  if (state === "waiting") endSent = false;
+  if (state === "playing" && list.length && list.every(([, p]) => p.finishedAt) && !endSent) {
+    endSent = true;
+    update(ref(db, "game"), { state: "ended", endedAt: Date.now() });
+  }
+
+  let trs;
+  if (state === "waiting") {
+    trs = list.map(([, p]) => [ "-", p.nick, (p.solved || 0) + " / " + TOTAL, "대기" ]);
+  } else {
+    trs = rank(players, startedAt).map((r, i) => [
+      i + 1, r.nick, r.solved + " / " + TOTAL,
+      r.sec !== null ? "완료 (" + r.sec + "초)" : r.at ? SPOT[r.at] + " 푸는 중" : "탐색 중"
+    ]);
+  }
+  $("rows").replaceChildren(...trs.map(cols => {
     const tr = document.createElement("tr");
-    const a = document.createElement("td"); a.textContent = p.nick;
-    const b = document.createElement("td"); b.textContent = (p.solved || 0) + " / " + TOTAL;
-    tr.append(a, b);
+    tr.append(...cols.map(cell));
     return tr;
   }));
+  tick();
 }
 
-onValue(ref(db, "game/state"), s => { state = s.val() || "waiting"; render(); });
+function tick(){
+  const state = game.state || "waiting";
+  if (state === "playing" && game.startedAt) $("clock").textContent = "경과 " + mmss(Date.now() - game.startedAt);
+  else if (state === "ended" && game.startedAt && game.endedAt) $("clock").textContent = "총 " + mmss(game.endedAt - game.startedAt);
+  else $("clock").textContent = "";
+}
+setInterval(tick, 1000);
+
+onValue(ref(db, "game"), s => { game = s.val() || {}; render(); });
 onValue(ref(db, "players"), s => { players = s.val() || {}; render(); });
 
 $("startBtn").onclick = async () => {
-  if (state !== "waiting") { $("msg").textContent = "이미 시작된 게임이에요. 새 게임을 눌러 초기화하세요."; return; }
+  if ((game.state || "waiting") !== "waiting") { $("msg").textContent = "이미 시작된 게임이에요. 새 게임을 눌러 초기화하세요."; return; }
   if (!Object.keys(players).length) { $("msg").textContent = "입장한 학생이 없어요."; return; }
   await update(ref(db, "game"), { state: "playing", startedAt: Date.now() });
+  $("msg").textContent = "";
+};
+
+$("endBtn").onclick = async () => {
+  if (game.state !== "playing") { $("msg").textContent = "진행 중인 게임이 없어요."; return; }
+  if (!confirm("지금 방탈출을 종료할까요? 아직 못 푼 학생은 미완료로 처리돼요.")) return;
+  await update(ref(db, "game"), { state: "ended", endedAt: Date.now() });
   $("msg").textContent = "";
 };
 
