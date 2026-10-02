@@ -14,3 +14,11 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getDatabase(app);
 export { ref, onValue, set, get, update, remove };
+
+// 푼 문제 수가 많은 순, 같으면 완료 시간(초)이 짧은 순
+export function rank(players, startedAt) {
+  return Object.entries(players || {}).map(([id, p]) => ({
+    id, nick: p.nick, solved: p.solved || 0, at: p.at || null,
+    sec: p.finishedAt ? Math.round((p.finishedAt - startedAt) / 1000) : null
+  })).sort((a, b) => b.solved - a.solved || (a.sec ?? 1e9) - (b.sec ?? 1e9));
+}
