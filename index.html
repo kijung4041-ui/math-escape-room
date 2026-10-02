@@ -68,6 +68,7 @@ button:disabled{opacity:.5}
     <div id="modal" class="hide"><div class="card">
       <h1 id="mTitle"></h1>
       <p id="mText"></p>
+      <div id="mBody"></div>
       <div id="mForm"><input id="mAns" placeholder="정답 입력" autocomplete="off"><button id="mSubmit">확인</button></div>
       <div class="err" id="mMsg"></div>
       <button id="mClose" class="sub">닫기</button>
@@ -270,6 +271,93 @@ const PROBLEMS = {
   4: { num: true, text: "11 × 11 = 4\n22 × 22 = 16\n33 × 33 = 36\n44 × 44 = ??\n\n??에 들어갈 숫자는?", ok: v => norm(v) === "64" },
   6: { num: false, text: "5는 0을 이기고\n0은 2를 이기고\n2는 5를 이기는 것은?", ok: v => norm(v) === "가위바위보" }
 };
+const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); Object.assign(e, props); e.append(...kids); return e; };
+const btn = (t, f) => el("button", { textContent: t, onclick: f, style: "margin:0" });
+
+Object.assign(PROBLEMS, {
+  1: { text: "1부터 시작해 번갈아 숫자를 말해요.\n한 번에 1~3개를 이어서 말할 수 있어요.\n31을 말하는 사람이 져요!", custom(body, win) {
+    let total = 0;
+    const info = el("div", { style: "font-size:19px;margin:10px 0;min-height:56px;white-space:pre-line" });
+    const box = el("div", { style: "display:flex;gap:8px" });
+    const msg = el("div", { className: "err" });
+    const turn = note => {
+      info.textContent = (note ? note + "\n" : "") + "지금까지: " + total;
+      box.replaceChildren(...[1, 2, 3].filter(k => total + k <= 31).map(k => btn("+" + k, () => {
+        total += k;
+        if (total >= 31) { info.textContent = "31을 말했어요."; msg.textContent = "졌어요! 다시 도전해 보세요."; box.replaceChildren(btn("다시 도전", start)); return; }
+        ai();
+      })));
+    };
+    const ai = () => {
+      const opts = [1, 2, 3].filter(k => total + k <= 31);
+      let k = opts.find(k => (total + k) % 4 === 2 && total + k <= 30);
+      if (!k || Math.random() < 0.3) {
+        const safe = opts.filter(k => total + k < 31), pool = safe.length ? safe : opts;
+        k = pool[Math.floor(Math.random() * pool.length)];
+      }
+      total += k;
+      if (total >= 31) return win();
+      turn("AI가 " + k + "개를 말했어요.");
+    };
+    const start = () => {
+      total = 0; msg.textContent = "";
+      info.textContent = "누가 먼저 시작할까요?";
+      box.replaceChildren(btn("내가 먼저", () => turn("")), btn("AI가 먼저", () => ai()));
+    };
+    body.append(info, box, msg);
+    start();
+  } },
+
+  3: { text: "서로 다른 숫자 3개를 맞혀 보세요.\n10번 안에 맞히면 성공!\nS: 숫자와 위치 모두 일치\nB: 숫자만 일치, 모두 다르면 O", custom(body, win) {
+    const newSecret = () => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].sort(() => Math.random() - 0.5).slice(0, 3).join("");
+    let secret = newSecret(), tries = 0;
+    const inp = el("input", { placeholder: "숫자 3개 (예: 123)", maxLength: 3, inputMode: "numeric" });
+    const msg = el("div", { className: "err" });
+    const log = el("div", { style: "max-height:130px;overflow:auto;font-size:16px;text-align:left;margin-top:6px" });
+    const go = el("button", { textContent: "확인" });
+    go.onclick = () => {
+      const g = inp.value.trim();
+      if (!/^\d{3}$/.test(g) || new Set(g).size < 3) { msg.textContent = "서로 다른 숫자 3개를 입력하세요."; return; }
+      tries++;
+      let s = 0, b = 0;
+      for (let i = 0; i < 3; i++) { if (g[i] === secret[i]) s++; else if (secret.includes(g[i])) b++; }
+      log.prepend(el("div", { textContent: tries + "회  " + g + "  →  " + (s + b === 0 ? "O (아웃)" : s + "S " + b + "B") }));
+      inp.value = ""; msg.textContent = "";
+      if (s === 3) return win();
+      if (tries >= 10) { msg.textContent = "10번 실패! 새 숫자로 다시 시작해요."; secret = newSecret(); tries = 0; log.replaceChildren(); }
+    };
+    inp.addEventListener("keydown", e => { if (e.key === "Enter") go.click(); });
+    body.append(inp, go, msg, log);
+  } },
+
+  5: { text: "1~9를 한 번씩만 써서\n가로, 세로, 대각선의 합이\n모두 같아지게 채우세요.", custom(body, win) {
+    const g = [0, 0, 0, 0, 0, 0, 8, 1, 6];
+    let sel = -1;
+    const grid = el("div", { style: "display:grid;grid-template-columns:repeat(3,64px);gap:6px;justify-content:center;margin:10px 0" });
+    const msg = el("div", { className: "err" });
+    const lines = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]];
+    const check = () => {
+      if (g.includes(0)) { msg.textContent = ""; return; }
+      const sums = lines.map(l => l.reduce((s, i) => s + g[i], 0));
+      if (new Set(g).size === 9 && sums.every(s => s === sums[0])) win();
+      else msg.textContent = "아직 합이 달라요. 다시 확인해 보세요.";
+    };
+    const draw = () => grid.replaceChildren(...g.map((v, i) => el("button", {
+      textContent: v || "",
+      style: "width:64px;height:64px;margin:0;padding:0;font-size:26px;border:2px solid #b9d7f5;color:#23324a;background:" + (i > 5 ? "#dfe9f5" : i === sel ? "#ffd24d" : "#fff"),
+      onclick: () => { if (i < 6) { sel = i; draw(); } }
+    })));
+    const pad = el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;justify-content:center" },
+      ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map(n => el("button", {
+        textContent: n || "지움", className: "sub",
+        style: "width:56px;margin:0;padding:10px 0;font-size:18px",
+        onclick: () => { if (sel < 0) return; g[sel] = n; draw(); check(); }
+      })));
+    body.append(grid, pad, msg);
+    draw();
+  } }
+});
+
 let openSpot = null, locked = false;
 const isDone = q => !!(players[myId] && players[myId].done && players[myId].done[q]);
 const setAt = q => { if (myId) update(ref(db, "players/" + myId), { at: q }); };
@@ -281,6 +369,7 @@ $("act").onclick = () => {
   $("mTitle").textContent = openSpot.n;
   $("mMsg").textContent = "";
   $("mAns").value = "";
+  $("mBody").replaceChildren();
   if (isDone(q)) {
     $("mText").textContent = "이미 푼 문제예요. 다른 곳도 찾아보세요!";
     $("mForm").classList.add("hide");
@@ -290,7 +379,10 @@ $("act").onclick = () => {
   } else {
     $("mText").textContent = p.text;
     $("mAns").inputMode = p.num ? "numeric" : "text";
-    $("mForm").classList.remove("hide");
+    if (p.custom) {
+      $("mForm").classList.add("hide");
+      p.custom($("mBody"), () => markDone(q));
+    } else $("mForm").classList.remove("hide");
   }
   $("modal").classList.remove("hide");
   setAt(q);
@@ -303,20 +395,24 @@ function closeModal() {
 }
 $("mClose").onclick = closeModal;
 
+async function markDone(q) {
+  $("mMsg").style.color = "#2e8b57";
+  $("mMsg").textContent = "정답이에요! 🎉";
+  const done = Object.keys((players[myId] && players[myId].done) || {});
+  if (!done.includes(String(q))) done.push(String(q));
+  const upd = { ["done/" + q]: true, solved: done.length };
+  if (done.length === SPOTS.length) upd.finishedAt = Date.now();
+  await update(ref(db, "players/" + myId), upd);
+  setTimeout(closeModal, 900);
+}
+
 async function submit() {
   if (!openSpot || locked) return;
   const v = $("mAns").value.trim();
   if (!v) return;
   const q = openSpot.q;
   if (PROBLEMS[q].ok(v)) {
-    $("mMsg").style.color = "#2e8b57";
-    $("mMsg").textContent = "정답이에요! 🎉";
-    const done = Object.keys((players[myId] && players[myId].done) || {});
-    if (!done.includes(String(q))) done.push(String(q));
-    const upd = { ["done/" + q]: true, solved: done.length };
-    if (done.length === SPOTS.length) upd.finishedAt = Date.now();
-    await update(ref(db, "players/" + myId), upd);
-    setTimeout(closeModal, 900);
+    await markDone(q);
   } else {
     $("mMsg").style.color = "#c0392b";
     $("mMsg").textContent = "아쉬워요. 다시 생각해 보세요.";
