@@ -24,6 +24,9 @@ li.me{background:#ffe9a6;font-weight:700}
 #knob{position:absolute;left:35px;top:35px;width:46px;height:46px;border-radius:50%;background:#ffd24d;pointer-events:none}
 #act{position:absolute;right:18px;bottom:40px;width:auto;margin:0;padding:14px 22px}
 #modal{position:absolute;inset:0;background:#23324a99;display:flex;align-items:center;justify-content:center}
+button.sub{background:#e3f1ff}
+button:disabled{opacity:.5}
+#mText{white-space:pre-line;color:#23324a;font-size:18px;line-height:1.7}
 </style>
 </head>
 <body>
@@ -62,7 +65,13 @@ li.me{background:#ffe9a6;font-weight:700}
     </svg>
     <div id="base"><div id="knob"></div></div>
     <button id="act" class="hide"></button>
-    <div id="modal" class="hide"><div class="card"><h1 id="mTitle"></h1><p>문제 화면은 다음 단계에서 만들어요.</p><button id="mClose">닫기</button></div></div>
+    <div id="modal" class="hide"><div class="card">
+      <h1 id="mTitle"></h1>
+      <p id="mText"></p>
+      <div id="mForm"><input id="mAns" placeholder="정답 입력" autocomplete="off"><button id="mSubmit">확인</button></div>
+      <div class="err" id="mMsg"></div>
+      <button id="mClose" class="sub">닫기</button>
+    </div></div>
   </section>
 
   <section id="end" class="hide">
@@ -72,7 +81,7 @@ li.me{background:#ffe9a6;font-weight:700}
 </main>
 
 <script type="module">
-import { db, ref, onValue, set } from "./firebase-config.js";
+import { db, ref, onValue, set, update } from "./firebase-config.js";
 
 const $ = id => document.getElementById(id);
 let myId = sessionStorage.getItem("pid");
@@ -159,7 +168,7 @@ function actor(id, nick, mine) {
     t.textContent = nick;
     g.append(c, t);
     $("actors").append(g);
-    a = shown[id] = { g, x: null, y: null };
+    a = shown[id] = { g, t, x: null, y: null };
   }
   return a;
 }
@@ -178,6 +187,7 @@ function stopGame() {
   cancelAnimationFrame(raf);
   vec = { x: 0, y: 0 };
   $("actors").replaceChildren();
+  $("modal").classList.add("hide");
   shown = {};
 }
 
@@ -204,6 +214,9 @@ function loop(t) {
   for (const id of Object.keys(targets)) {
     if (id === myId || !players[id]) continue;
     const a = actor(id, players[id].nick, false), tg = targets[id];
+    const at = players[id].at && SPOTS.find(s => s.q === players[id].at);
+    const label = players[id].nick + (at ? " · " + at.n + " 푸는 중" : "");
+    if (a.t.textContent !== label) a.t.textContent = label;
     if (a.x === null) { a.x = tg.x; a.y = tg.y; }
     a.x += (tg.x - a.x) * 0.25;
     a.y += (tg.y - a.y) * 0.25;
@@ -218,10 +231,11 @@ function loop(t) {
     const dy = Math.max(r.y - pos.y, 0, pos.y - (r.y + r.h));
     return Math.hypot(dx, dy) < 38;
   }) || null;
-  if (spot !== nearSpot) {
-    nearSpot = spot;
-    $("act").classList.toggle("hide", !spot);
-    if (spot) $("act").textContent = spot.n + " 문제 열기";
+  nearSpot = spot;
+  $("act").classList.toggle("hide", !spot);
+  if (spot) {
+    const lab = spot.n + (isDone(spot.q) ? " ✓ 해결" : " 문제 열기");
+    if ($("act").textContent !== lab) $("act").textContent = lab;
   }
   raf = requestAnimationFrame(loop);
 }
@@ -247,15 +261,72 @@ base.addEventListener("pointerdown", e => { drag = true; base.setPointerCapture(
 base.addEventListener("pointermove", e => { if (drag) stick(e); });
 base.addEventListener("pointerup", endStick);
 base.addEventListener("pointercancel", endStick);
-window.addEventListener("keydown", e => { keys[e.key.toLowerCase()] = true; });
+window.addEventListener("keydown", e => { if (e.target.tagName === "INPUT") return; keys[e.key.toLowerCase()] = true; });
 window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
+
+const norm = v => v.replace(/[\s,.·!?]/g, "");
+const PROBLEMS = {
+  2: { num: true, text: "973, 189, ??, 14, 4\n\n??에 들어갈 숫자는?", ok: v => norm(v) === "72" },
+  4: { num: true, text: "11 × 11 = 4\n22 × 22 = 16\n33 × 33 = 36\n44 × 44 = ??\n\n??에 들어갈 숫자는?", ok: v => norm(v) === "64" },
+  6: { num: false, text: "5는 0을 이기고\n0은 2를 이기고\n2는 5를 이기는 것은?", ok: v => norm(v) === "가위바위보" }
+};
+let openSpot = null, locked = false;
+const isDone = q => !!(players[myId] && players[myId].done && players[myId].done[q]);
+const setAt = q => { if (myId) update(ref(db, "players/" + myId), { at: q }); };
 
 $("act").onclick = () => {
   if (!nearSpot) return;
-  $("mTitle").textContent = nearSpot.n + " (문제 " + nearSpot.q + ")";
+  openSpot = nearSpot;
+  const q = openSpot.q, p = PROBLEMS[q];
+  $("mTitle").textContent = openSpot.n;
+  $("mMsg").textContent = "";
+  $("mAns").value = "";
+  if (isDone(q)) {
+    $("mText").textContent = "이미 푼 문제예요. 다른 곳도 찾아보세요!";
+    $("mForm").classList.add("hide");
+  } else if (!p) {
+    $("mText").textContent = "이 문제는 다음 단계에서 만들어요.";
+    $("mForm").classList.add("hide");
+  } else {
+    $("mText").textContent = p.text;
+    $("mAns").inputMode = p.num ? "numeric" : "text";
+    $("mForm").classList.remove("hide");
+  }
   $("modal").classList.remove("hide");
+  setAt(q);
 };
-$("mClose").onclick = () => $("modal").classList.add("hide");
+
+function closeModal() {
+  $("modal").classList.add("hide");
+  openSpot = null;
+  setAt(null);
+}
+$("mClose").onclick = closeModal;
+
+async function submit() {
+  if (!openSpot || locked) return;
+  const v = $("mAns").value.trim();
+  if (!v) return;
+  const q = openSpot.q;
+  if (PROBLEMS[q].ok(v)) {
+    $("mMsg").style.color = "#2e8b57";
+    $("mMsg").textContent = "정답이에요! 🎉";
+    const done = Object.keys((players[myId] && players[myId].done) || {});
+    if (!done.includes(String(q))) done.push(String(q));
+    const upd = { ["done/" + q]: true, solved: done.length };
+    if (done.length === SPOTS.length) upd.finishedAt = Date.now();
+    await update(ref(db, "players/" + myId), upd);
+    setTimeout(closeModal, 900);
+  } else {
+    $("mMsg").style.color = "#c0392b";
+    $("mMsg").textContent = "아쉬워요. 다시 생각해 보세요.";
+    locked = true;
+    $("mSubmit").disabled = true;
+    setTimeout(() => { locked = false; $("mSubmit").disabled = false; }, 2000);
+  }
+}
+$("mSubmit").onclick = submit;
+$("mAns").addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
 </script>
 </body>
 </html>
