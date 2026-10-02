@@ -96,6 +96,7 @@ $("startBtn").onclick = async () => {
 $("resetBtn").onclick = async () => {
   if (!confirm("모든 학생 정보를 지우고 새 게임을 준비할까요?")) return;
   await remove(ref(db, "players"));
+  await remove(ref(db, "positions"));
   await set(ref(db, "game"), { state: "waiting" });
   $("msg").textContent = "";
 };
