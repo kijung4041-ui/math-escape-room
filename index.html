@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>수포자를 위한 수학 방탈출</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#eaf5ff;color:#23324a;font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
+.card{background:#fff;border-radius:20px;padding:28px 24px;width:min(92vw,380px);text-align:center;border:2px solid #cfe5fa}
+h1{font-size:22px;margin:0 0 8px}
+p{margin:0 0 18px;font-size:15px;color:#5b6b82;line-height:1.5}
+input{width:100%;box-sizing:border-box;font-size:18px;padding:12px;border:2px solid #b9d7f5;border-radius:12px;text-align:center;color:#23324a}
+input:focus{outline:3px solid #ffd24d;border-color:#ffd24d}
+button{width:100%;margin-top:12px;font-size:18px;padding:13px;border:0;border-radius:12px;background:#ffd24d;color:#23324a;font-weight:700;cursor:pointer}
+.err{color:#c0392b;font-size:14px;min-height:18px;margin-top:8px}
+ul{list-style:none;padding:0;margin:0 0 6px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+li{background:#e3f1ff;border-radius:999px;padding:6px 14px;font-size:15px}
+li.me{background:#ffe9a6;font-weight:700}
+.hide{display:none}
+</style>
+</head>
+<body>
+<main class="card">
+  <section id="join" class="hide">
+    <h1>수학 방탈출</h1>
+    <p id="joinMsg">닉네임을 입력하고 입장하세요.</p>
+    <div id="joinForm">
+      <input id="nick" maxlength="8" placeholder="닉네임 (8자 이내)" autocomplete="off">
+      <button id="joinBtn">입장하기</button>
+    </div>
+    <div class="err" id="err"></div>
+  </section>
+
+  <section id="wait" class="hide">
+    <h1>대기실</h1>
+    <p>선생님이 시작할 때까지 기다려 주세요.</p>
+    <ul id="list"></ul>
+    <p id="count"></p>
+  </section>
+
+  <section id="play" class="hide">
+    <h1>게임 시작!</h1>
+    <p>교실 맵은 다음 단계에서 이 화면에 들어와요.</p>
+  </section>
+
+  <section id="end" class="hide">
+    <h1>방탈출 종료</h1>
+    <p>결과 화면은 다음 단계에서 만들어요.</p>
+  </section>
+</main>
+
+<script type="module">
+import { db, ref, onValue, set } from "./firebase-config.js";
+
+const $ = id => document.getElementById(id);
+let myId = sessionStorage.getItem("pid");
+let state = "waiting", players = {}, gotState = false, gotPlayers = false;
+
+function show(name){
+  for (const s of ["join","wait","play","end"]) $(s).classList.toggle("hide", s !== name);
+}
+
+function render(){
+  if (!gotState || !gotPlayers) return;
+  if (myId && !players[myId]) { sessionStorage.removeItem("pid"); myId = null; }
+  if (!myId) {
+    show("join");
+    const open = state === "waiting";
+    $("joinForm").classList.toggle("hide", !open);
+    $("joinMsg").textContent = open ? "닉네임을 입력하고 입장하세요." : "이미 게임이 진행 중이에요. 선생님께 문의하세요.";
+    return;
+  }
+  if (state === "playing") return show("play");
+  if (state === "ended") return show("end");
+  show("wait");
+  const names = Object.entries(players);
+  $("list").replaceChildren(...names.map(([id, p]) => {
+    const li = document.createElement("li");
+    li.textContent = p.nick;
+    if (id === myId) li.className = "me";
+    return li;
+  }));
+  $("count").textContent = names.length + "명 입장";
+}
+
+onValue(ref(db, "game/state"), s => { state = s.val() || "waiting"; gotState = true; render(); });
+onValue(ref(db, "players"), s => { players = s.val() || {}; gotPlayers = true; render(); });
+
+async function join(){
+  const nick = $("nick").value.trim();
+  if (!nick) { $("err").textContent = "닉네임을 입력하세요."; return; }
+  const dup = Object.values(players).some(p => p.nick.toLowerCase() === nick.toLowerCase());
+  if (dup) { $("err").textContent = "이미 사용 중인 닉네임이에요. 다른 닉네임을 입력하세요."; return; }
+  const id = "p" + Date.now() + Math.random().toString(36).slice(2, 6);
+  try {
+    await set(ref(db, "players/" + id), { nick, joinedAt: Date.now(), solved: 0 });
+    sessionStorage.setItem("pid", id);
+    myId = id;
+    $("err").textContent = "";
+    render();
+  } catch (e) {
+    $("err").textContent = "접속에 실패했어요. 다시 시도하세요.";
+  }
+}
+$("joinBtn").onclick = join;
+$("nick").addEventListener("keydown", e => { if (e.key === "Enter") join(); });
+</script>
+</body>
+</html>

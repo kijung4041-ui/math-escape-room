@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>수학 방탈출 - 교사용</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#eaf5ff;color:#23324a;font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
+.card{background:#fff;border-radius:20px;padding:28px 24px;width:min(94vw,520px);border:2px solid #cfe5fa}
+h1{font-size:22px;margin:0 0 8px}
+p{margin:0 0 16px;font-size:15px;color:#5b6b82;line-height:1.5}
+input{width:100%;box-sizing:border-box;font-size:18px;padding:12px;border:2px solid #b9d7f5;border-radius:12px;color:#23324a}
+input:focus{outline:3px solid #ffd24d;border-color:#ffd24d}
+button{font-size:17px;padding:12px 18px;border:0;border-radius:12px;background:#ffd24d;color:#23324a;font-weight:700;cursor:pointer}
+button.sub{background:#e3f1ff}
+.row{display:flex;gap:10px;margin-top:14px}
+.row button{flex:1}
+.err{color:#c0392b;font-size:14px;min-height:18px;margin-top:8px}
+table{width:100%;border-collapse:collapse;font-size:16px;margin-bottom:6px}
+td,th{padding:9px 6px;border-bottom:1px solid #e3eefa;text-align:left}
+th{color:#5b6b82;font-weight:600;font-size:14px}
+.badge{display:inline-block;background:#ffe9a6;border-radius:999px;padding:3px 12px;font-size:14px;font-weight:700}
+.hide{display:none}
+</style>
+</head>
+<body>
+<main class="card">
+  <section id="gate">
+    <h1>교사용 관리자</h1>
+    <p>비밀번호를 입력하세요.</p>
+    <input id="pw" type="password" inputmode="numeric" autocomplete="off">
+    <div class="row"><button id="pwBtn">입장</button></div>
+    <div class="err" id="gateErr"></div>
+  </section>
+
+  <section id="panel" class="hide">
+    <h1>대기자 확인</h1>
+    <p>상태: <span class="badge" id="state"></span> · <span id="count"></span></p>
+    <table>
+      <thead><tr><th>닉네임</th><th>푼 문제</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="row">
+      <button id="startBtn">게임 시작</button>
+      <button id="resetBtn" class="sub">새 게임</button>
+    </div>
+    <div class="err" id="msg"></div>
+  </section>
+</main>
+
+<script type="module">
+import { db, ref, onValue, set, update, remove } from "./firebase-config.js";
+
+const PASSWORD = "1234";
+const TOTAL = 6;
+const $ = id => document.getElementById(id);
+const LABEL = { waiting: "대기 중", playing: "진행 중", ended: "종료" };
+let state = "waiting", players = {};
+
+function unlock(){
+  $("gate").classList.add("hide");
+  $("panel").classList.remove("hide");
+}
+if (sessionStorage.getItem("adm") === "1") unlock();
+
+function login(){
+  if ($("pw").value === PASSWORD) { sessionStorage.setItem("adm", "1"); unlock(); }
+  else $("gateErr").textContent = "비밀번호가 맞지 않아요.";
+}
+$("pwBtn").onclick = login;
+$("pw").addEventListener("keydown", e => { if (e.key === "Enter") login(); });
+
+function render(){
+  $("state").textContent = LABEL[state] || state;
+  const list = Object.values(players);
+  $("count").textContent = list.length + "명 입장";
+  $("rows").replaceChildren(...list.map(p => {
+    const tr = document.createElement("tr");
+    const a = document.createElement("td"); a.textContent = p.nick;
+    const b = document.createElement("td"); b.textContent = (p.solved || 0) + " / " + TOTAL;
+    tr.append(a, b);
+    return tr;
+  }));
+}
+
+onValue(ref(db, "game/state"), s => { state = s.val() || "waiting"; render(); });
+onValue(ref(db, "players"), s => { players = s.val() || {}; render(); });
+
+$("startBtn").onclick = async () => {
+  if (state !== "waiting") { $("msg").textContent = "이미 시작된 게임이에요. 새 게임을 눌러 초기화하세요."; return; }
+  if (!Object.keys(players).length) { $("msg").textContent = "입장한 학생이 없어요."; return; }
+  await update(ref(db, "game"), { state: "playing", startedAt: Date.now() });
+  $("msg").textContent = "";
+};
+
+$("resetBtn").onclick = async () => {
+  if (!confirm("모든 학생 정보를 지우고 새 게임을 준비할까요?")) return;
+  await remove(ref(db, "players"));
+  await set(ref(db, "game"), { state: "waiting" });
+  $("msg").textContent = "";
+};
+</script>
+</body>
+</html>
