@@ -26,6 +26,8 @@ li.me{background:#ffe9a6;font-weight:700}
 #modal{position:absolute;inset:0;background:#23324a99;display:flex;align-items:center;justify-content:center}
 button.sub{background:#e3f1ff}
 button:disabled{opacity:.5}
+td,th{padding:8px 4px;border-bottom:1px solid #e3eefa}
+th{font-size:14px;color:#5b6b82}
 #mText{white-space:pre-line;color:#23324a;font-size:18px;line-height:1.7}
 </style>
 </head>
@@ -75,21 +77,29 @@ button:disabled{opacity:.5}
     </div></div>
   </section>
 
+  <section id="done" class="hide">
+    <h1>탈출 성공! 🎉</h1>
+    <p id="doneTime"></p>
+    <p>다른 친구들이 끝날 때까지 기다려 주세요.</p>
+    <div id="doneRank"></div>
+  </section>
+
   <section id="end" class="hide">
     <h1>방탈출 종료</h1>
-    <p>결과 화면은 다음 단계에서 만들어요.</p>
+    <p>최종 순위예요. 수고했어요!</p>
+    <div id="rank"></div>
   </section>
 </main>
 
 <script type="module">
-import { db, ref, onValue, set, update } from "./firebase-config.js";
+import { db, ref, onValue, set, update, rank } from "./firebase-config.js";
 
 const $ = id => document.getElementById(id);
 let myId = sessionStorage.getItem("pid");
-let state = "waiting", players = {}, gotState = false, gotPlayers = false;
+let state = "waiting", players = {}, gotState = false, gotPlayers = false, startedAt = 0, endSent = false;
 
 function show(name){
-  for (const s of ["join","wait","play","end"]) $(s).classList.toggle("hide", s !== name);
+  for (const s of ["join","wait","play","done","end"]) $(s).classList.toggle("hide", s !== name);
   if (name !== "play") stopGame();
 }
 
@@ -103,8 +113,21 @@ function render(){
     $("joinMsg").textContent = open ? "닉네임을 입력하고 입장하세요." : "이미 게임이 진행 중이에요. 선생님께 문의하세요.";
     return;
   }
-  if (state === "playing") { show("play"); startGame(); return; }
-  if (state === "ended") return show("end");
+  if (state === "waiting") endSent = false;
+  if (state === "playing") {
+    const ps = Object.values(players);
+    if (ps.length && ps.every(p => p.finishedAt) && !endSent) {
+      endSent = true;
+      update(ref(db, "game"), { state: "ended", endedAt: Date.now() });
+    }
+    if (players[myId].finishedAt) {
+      show("done");
+      $("doneTime").textContent = "내 기록: " + Math.round((players[myId].finishedAt - startedAt) / 1000) + "초";
+      $("doneRank").replaceChildren(rankTable());
+    } else { show("play"); startGame(); }
+    return;
+  }
+  if (state === "ended") { show("end"); $("rank").replaceChildren(rankTable()); return; }
   show("wait");
   const names = Object.entries(players);
   $("list").replaceChildren(...names.map(([id, p]) => {
@@ -116,7 +139,7 @@ function render(){
   $("count").textContent = names.length + "명 입장";
 }
 
-onValue(ref(db, "game/state"), s => { state = s.val() || "waiting"; gotState = true; render(); });
+onValue(ref(db, "game"), s => { const v = s.val() || {}; state = v.state || "waiting"; startedAt = v.startedAt || 0; gotState = true; render(); });
 onValue(ref(db, "players"), s => { players = s.val() || {}; gotPlayers = true; render(); });
 
 async function join(){
@@ -272,6 +295,16 @@ const PROBLEMS = {
   6: { num: false, text: "5는 0을 이기고\n0은 2를 이기고\n2는 5를 이기는 것은?", ok: v => norm(v) === "가위바위보" }
 };
 const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); Object.assign(e, props); e.append(...kids); return e; };
+
+function rankTable() {
+  const rows = rank(players, startedAt).map((r, i) => el("tr", { style: r.id === myId ? "background:#ffe9a6;font-weight:700" : "" },
+    el("td", { textContent: i + 1 }),
+    el("td", { textContent: r.nick }),
+    el("td", { textContent: r.solved + "/" + SPOTS.length }),
+    el("td", { textContent: r.sec === null ? "미완료" : r.sec + "초" })));
+  return el("table", { style: "width:100%;border-collapse:collapse;font-size:16px;text-align:left" },
+    el("tr", {}, ...["순위", "닉네임", "푼 문제", "기록"].map(t => el("th", { textContent: t }))), ...rows);
+}
 const btn = (t, f) => el("button", { textContent: t, onclick: f, style: "margin:0" });
 
 Object.assign(PROBLEMS, {
